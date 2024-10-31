@@ -1,0 +1,162 @@
+if __name__ == '__main__':
+    data = pd.read_csv('test.csv').values
+    print(data)
+    vehicleNum = 1
+    vehicleQ = 40
+    n = int((data.shape[0] - 2) / 2)
+    print('n =', n)
+    print('data.shape[0] =', data.shape[0])
+    
+    # 计算c_ij
+    c = np.zeros(shape=[data.shape[0], data.shape[0]]) #初始化0矩阵
+    for i in range(data.shape[0]):
+        for j in range(data.shape[0]):
+            if i != j:
+                c[i, j] = ((data[i, 1] - data[j, 1]) ** 2 + (data[i, 2] - data[j, 2]) ** 2) ** 0.5
+    print(c)
+
+PDVRPTW = Model()
+
+#决策变量X_ijk，目标函数Minimize ∑c_ij * x_ijk
+x = {}
+for i in range(data.shape[0]):
+    for j in range(data.shape[0]):
+        for k in range(vehicleNum):
+            if i != j:
+                x[i, j, k] = PDVRPTW.addVar(obj=c[i, j], vtype=GRB.BINARY,
+                                            name='x_' + str(i) + '_' + str(j) + '_' + str(k))
+
+#决策变量Q_ik
+Q = {}
+for i in range(data.shape[0]):
+    for k in range(vehicleNum):
+        Q[i, k] = PDVRPTW.addVar(lb=0, ub=vehicleQ, vtype=GRB.CONTINUOUS, name='Q_'+str(i) + '_' + str(k))
+
+#决策变量T_ik
+T = {}
+for i in range(data.shape[0]):
+    for k in range(vehicleNum):
+        T[i, k] = PDVRPTW.addVar(lb=0, ub=data[0, 5], vtype=GRB.CONTINUOUS, name='T_' + str(i) + '_' + str(k))
+
+#约束1：每个节点只服务一次
+for i in range(1, n+1):
+    expr1 = LinExpr(0)
+    for j in range(data.shape[0]):
+        for k in range(vehicleNum):
+            if i != j:
+                expr1.addTerms(1, x[i, j, k])
+    PDVRPTW.addConstr(expr1 == 1, name='cons1' + '_' + str(i))
+
+#约束2：取货节点与对应送货节点由同一辆车访问
+for i in range(1, n+1):
+    for k in range(vehicleNum):
+        expr2 = LinExpr(0)
+        for j1 in range(1, data.shape[0] - 1):
+            if i != j1:
+                expr2.addTerms(1, x[i, j1, k])
+        for j2 in range(1, data.shape[0]):
+            if n+i != j2:
+                expr2.addTerms(-1, x[n+i, j2, k])
+        PDVRPTW.addConstr(expr2 == 0, name='cons2' + '_' + str(i) + '_' + str(k))
+
+#约束3：车辆驶出起始仓库
+for k in range(vehicleNum):
+    expr3 = LinExpr(0)
+    for j in range(data.shape[0]):
+        if j != 0:
+            expr3.addTerms(1, x[0, j, k])
+    PDVRPTW.addConstr(expr3 == 1, name='cons3' + '_' + str(k))
+
+#约束4：每个节点的流平衡,即进入该节点的车辆一定从该点再出发。
+for i in range(1, data.shape[0] - 1):
+    for k in range(vehicleNum):
+        expr4 = LinExpr(0)
+        #来点i的可能路径
+        for j1 in range(0, data.shape[0] - 1):
+            if i != j1 and j1 != n+i:
+                expr4.addTerms(1, x[j1, i, k])
+        #离开i的可能路径
+        for j2 in range(1, data.shape[0]):
+            if i != j2:
+                expr4.addTerms(-1, x[i, j2, k])
+        PDVRPTW.addConstr(expr4 == 0, name='cons4' + '_' + str(i) + '_' + str(k))
+
+#约束5：车辆返回仓库
+for k in range(vehicleNum):
+    expr5 = LinExpr(0)
+    for i in range(data.shape[0]):
+        if i != 2*n+1:
+            expr5.addTerms(1, x[i, 2*n+1, k])
+    PDVRPTW.addConstr(expr5 == 1, name='cons5' + '_' + str(k))
+
+#约束6：时间,T_ik为k车到达节点i的时间，即k车开始为节点i提供服务的时间; t_ij = c_ij
+for i in range(data.shape[0]):
+    for j in range(data.shape[0]):
+        for k in range(vehicleNum):
+            if i != j:
+                PDVRPTW.addConstr(T[i, k] * x[i, j, k] +
+                                  data[i, 6] * x[i, j, k] +
+                                  c[i, j] * x[i, j, k] -
+                                  T[j, k] <= 0, name='cons6' + '_' + str(i) + '_' + str(j) + '_' + str(k))
+
+#约束7：负载,Q_ik是经过节点i之后车辆k的负载
+for i in range(data.shape[0]):
+    for j in range(data.shape[0]):
+        for k in range(vehicleNum):
+            if i != j:
+                PDVRPTW.addConstr(Q[i, k] * x[i, j, k] +
+                                  data[j, 3] * x[i, j, k] -
+                                  Q[j, k] <= 0, name='cons7' + '_' + str(i) + '_' + str(j) + '_' + str(k))
+
+for k in range(vehicleNum):
+    PDVRPTW.addConstr(Q[0, k] == 0)
+    PDVRPTW.addConstr(Q[data.shape[0] - 1, k] == 0)
+
+#约束8：先提货再送货
+for i in range(1, n+1):
+    for k in range(vehicleNum):
+
+        PDVRPTW.addConstr(-T[n+i, k] + T[i, k] + data[i, 6] + c[i, n+i] <= 0,
+                          name='cons8' + '_' + str(i) + '_' + str(k))
+
+#约束9：限制总时长
+for k in range(vehicleNum):
+    PDVRPTW.addConstr(T[2*n+1, k] - T[0, k] <= data[0, 5],
+                      name='cons9' + '_' + str(k))
+
+#约束10：时间窗约束
+for i in range(data.shape[0]):
+    for k in range(vehicleNum):
+        PDVRPTW.addConstr(data[i, 4] - T[i, k] <= 0, name='cons10_early' + '_' + str(i) + '_' + str(k))
+        PDVRPTW.addConstr(T[i, k] - data[i, 5] <= 0, name='cons10_late' + '_' + str(i) + '_' + str(k))
+
+#约束11：载重约束
+low = {}
+up = {}
+for i in range(data.shape[0]):
+    for k in range(vehicleNum):
+        low = max(0, data[i, 3])
+        up = min(vehicleQ, vehicleQ + data[i, 3])
+        #print(low)
+        #print(up)
+        PDVRPTW.addConstr(-Q[i, k] + low <= 0, name='cons11_left' + '_' + str(i) + '_' + str(k))
+        PDVRPTW.addConstr(Q[i, k] - up <= 0, name='cons11_right' + '_' + str(i) + '_' + str(k))
+
+
+
+#求解并输出模型
+PDVRPTW.write("PDVRPTW.lp")
+PDVRPTW.optimize()
+
+#获取解
+for key in x.keys():
+    if(x[key].x > 0):
+        print(x[key].Varname + ' =', x[key].x)
+
+for key in T.keys():
+    if(T[key].x > 0):
+        print(T[key].Varname + ' =', T[key].x)
+
+for key in Q.keys():
+    if(Q[key].x > 0):
+        print(Q[key].Varname + ' =', Q[key].x)
