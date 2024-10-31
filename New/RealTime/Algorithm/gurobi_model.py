@@ -4,21 +4,20 @@ import numpy as np
 from gurobipy import *
 
 # 定义全局变量
-global vehicleNum, gurobiTime, gurobiDemand, gurobiOverTime, gurobiPenalty, requirementNum, gurobiVehicleUseChecker, gurobiDistance
+global vehicleNum, gurobiTime, gurobiDemand, gurobiOverTime, gurobiPenalty, requirementNum, gurobiVehicleUseChecker, gurobiDistance, max_capacity
 
 def Gurobi():
     global vehicleNum, gurobiTime, gurobiDemand, gurobiOverTime, gurobiPenalty, requirementNum, gurobiVehicleUseChecker, gurobiDistance
     distanceData = pd.read_csv('New/Data/wangjing-newdis-simplify.csv', header=None).values
     vehicleNum = 5
-    requirementPosition = [31, 16, 25, 44, 61, 56, 58, 62, 8, 71, 29, 24, 69, 23]
     penalty_coefficient = 3.1415926
-    demand_data = pd.read_csv('New/Data/demand_data.csv', header=0).values
-    requirementPosition = demand_data[:, 0].tolist()  # 第一列为坐标
-    demand = demand_data[:, 1].tolist()  # 第二列为需求
-    start_time = demand_data[:, 2].tolist()  # 第三列为开始时间
-    end_time = demand_data[:, 3].tolist()  # 第四列为结束时间
+    demand_data = pd.read_csv('New/Data/demand_data.csv', header=0)  # 读取数据
+    requirementPosition = demand_data.iloc[:, 0].astype(int).tolist()  # 第一列为坐标，强制转换为整型
+    demand = demand_data.iloc[:, 1].astype(int).tolist()  # 第二列为需求，强制转换为整型
+    start_time = demand_data.iloc[:, 2].tolist()  # 第三列为开始时间
+    end_time = demand_data.iloc[:, 3].tolist()  # 第四列为结束时间
     requirementNum = len(demand) // 2 - 1  # 根据需求数据的长度计算 requirementNum
-    
+    max_capacity = 100
 
     # 创建 dis 矩阵
     dis = np.zeros((2 * requirementNum + 2, 2 * requirementNum + 2))
@@ -135,8 +134,9 @@ def Gurobi():
             model.addConstr((gurobiDistance[0, j, k] == 1) >> (gurobiDemand[j] == gurobiDemand[0] + demand[j - 1]), name=f'cons13_0_{j}_{k}')
             model.addConstr(gurobiDemand[0] == 0, name=f'cons_q_0_{k}')
 
+
     for j in range(2 * requirementNum + 2):
-        model.addConstr(gurobiDemand[j] <= 100, name=f'cons_q_max_{j}')
+        model.addConstr(gurobiDemand[j] <= max_capacity, name=f'cons_q_max_{j}')
 
     # 在约束中添加对gurobiTime的限制
     for i in range(1, requirementNum + 1):
