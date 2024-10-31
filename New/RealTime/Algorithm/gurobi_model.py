@@ -41,10 +41,7 @@ class GurobiModel:
         gurobiPenalty = self.model.addVars(2 * self.requirementNum + 2, vtype=GRB.CONTINUOUS, name="gurobiPenalty")
         gurobiVehicleUseChecker = self.model.addVars(self.vehicleNum, vtype=GRB.BINARY, name="gurobiVehicleUseChecker")
 
-        # 目标函数和约束的构建
-        self.set_objective_and_constraints(dis, gurobiDistance, gurobiTime, gurobiOverTime, gurobiDemand, gurobiPenalty, gurobiVehicleUseChecker)
-
-    def set_objective_and_constraints(self, dis, gurobiDistance, gurobiTime, gurobiOverTime, gurobiDemand, gurobiPenalty, gurobiVehicleUseChecker):
+        # 目标函数
         obj = LinExpr(0)
         for i in range(2 * self.requirementNum + 2):
             for j in range(2 * self.requirementNum + 2):
@@ -55,6 +52,9 @@ class GurobiModel:
             obj += 3.1415926 * gurobiOverTime[j]
             obj += 2 * 3.1415926 * gurobiPenalty[j]
 
+        self.model.setObjective(obj, GRB.MINIMIZE)
+
+        # 约束
         for k in range(self.vehicleNum):
             route_expr = LinExpr(0)
             for i in range(2 * self.requirementNum + 2):
@@ -63,12 +63,92 @@ class GurobiModel:
                         route_expr += gurobiDistance[i, j, k]
             self.model.addConstr(route_expr <= 1 + gurobiVehicleUseChecker[k] * (2 * self.requirementNum + 1), name=f'gurobiVehicleUseChecker_constr_{k}')
             self.model.addConstr(route_expr >= 2 * gurobiVehicleUseChecker[k], name=f'gurobiVehicleUseChecker_lower_constr_{k}')
-            obj += gurobiVehicleUseChecker[k] * 2
 
-        # 其他约束的添加
-        # ... (根据您的原始代码添加其他约束)
+        for i in range(1, 2 * self.requirementNum + 1):
+            expr1 = LinExpr(0)
+            for j in range(2 * self.requirementNum + 2):
+                for k in range(self.vehicleNum):
+                    if i != j:
+                        expr1.addTerms(1, gurobiDistance[i, j, k])
+            self.model.addConstr(expr1 == 1, name=f'cons1_{i}')
 
-        self.model.setObjective(obj, GRB.MINIMIZE)
+        for i in range(1, self.requirementNum + 1):
+            for k in range(self.vehicleNum):
+                expr2 = LinExpr(0)
+                for j in range(1, 2 * self.requirementNum + 1):
+                    if i != j:
+                        expr2.addTerms(1, gurobiDistance[i, j, k])
+                        expr2.addTerms(-1, gurobiDistance[self.requirementNum + i, j, k])
+                expr2.addTerms(1, gurobiDistance[i, 2 * self.requirementNum + 1, k])
+                expr2.addTerms(-1, gurobiDistance[self.requirementNum + i, 2 * self.requirementNum + 1, k])
+                self.model.addConstr(expr2 == 0, name=f'cons2_{i}_{k}')
+
+        for k in range(self.vehicleNum):
+            expr3 = LinExpr(0)
+            for j in range(1, 2 * self.requirementNum + 2):
+                expr3.addTerms(1, gurobiDistance[0, j, k])
+            self.model.addConstr(expr3 == 1, name=f'cons3_{k}')
+
+        for i in range(1, 2 * self.requirementNum + 1):
+            for k in range(self.vehicleNum):
+                expr4 = LinExpr(0)
+                for j in range(2 * self.requirementNum + 2):
+                    expr4.addTerms(1, gurobiDistance[i, j, k])
+                    expr4.addTerms(-1, gurobiDistance[j, i, k])
+                self.model.addConstr(expr4 == 0, name=f'cons4_{i}_{k}')
+
+        for k in range(self.vehicleNum):
+            expr5 = LinExpr(0)
+            for i in range(2 * self.requirementNum + 1):
+                expr5.addTerms(1, gurobiDistance[i, 2 * self.requirementNum + 1, k])
+            self.model.addConstr(expr5 == 1, name=f'cons5_{k}')
+
+        for i in range(2 * self.requirementNum + 2):
+            for j in range(2 * self.requirementNum + 2):
+                for k in range(self.vehicleNum):
+                    if i != j:
+                        self.model.addConstr(gurobiTime[j] + (1 - gurobiDistance[i, j, k]) * 1000000 >= (gurobiTime[i] + dis[i, j]) * gurobiDistance[i, j, k], name=f'cons6_{i}_{j}_{k}')
+                        self.model.addConstr(gurobiTime[j] * gurobiDistance[i, j, k] >= (gurobiTime[i] + dis[i, j]) * gurobiDistance[i, j, k] - 0.000001, name=f'cons6_{i}_{j}_{k}_epsilon')
+
+        for i in range(1, self.requirementNum + 1):
+            self.model.addConstr(gurobiTime[self.requirementNum + i] >= gurobiTime[i] + dis[i, self.requirementNum + i], name=f'cons7_{i}')
+
+        for j in range(1, 2 * self.requirementNum + 1):
+            self.model.addConstr(gurobiOverTime[j] >= 0, name=f'cons8_{j}')
+
+        for j in range(1, 2 * self.requirementNum + 1):
+            self.model.addConstr(gurobiTime[j] >= 0, name=f'cons_a_{j}')
+
+        self.model.addConstr(gurobiTime[0] == 0, name='cons_a_0')
+
+        for j in range(self.requirementNum + 1, 2 * self.requirementNum + 1):
+            self.model.addConstr(gurobiOverTime[j] >= gurobiTime[j] - self.end_time[j - self.requirementNum - 1], name=f'constr9_{j}')
+            self.model.addConstr(gurobiPenalty[j] >= gurobiTime[j] - self.end_time[j - self.requirementNum - 1] - 1, name=f'constr10_{j}')
+            self.model.addConstr(gurobiPenalty[j] >= 0, name=f'constr101_{j}')
+
+        for k in range(self.vehicleNum):
+            for i in range(2 * self.requirementNum + 2):
+                for j in range(1, self.requirementNum + 1):
+                    if i != j:
+                        self.model.addConstr((gurobiDistance[i, j, k] == 1) >> (gurobiDemand[i] + self.demand[j - 1] == gurobiDemand[j]), name=f'cons11_{i}_{j}_{k}')
+
+        for k in range(self.vehicleNum):
+            for i in range(2 * self.requirementNum + 2):
+                for j in range(self.requirementNum + 1, 2 * self.requirementNum + 1):
+                    if i != j:
+                        self.model.addConstr((gurobiDistance[i, j, k] == 1) >> (gurobiDemand[i] - self.demand[j - 1] == gurobiDemand[j]), name=f'cons12_{i}_{j}_{k}')
+
+        for k in range(self.vehicleNum):
+            for j in range(1, self.requirementNum + 1):
+                self.model.addConstr((gurobiDistance[0, j, k] == 1) >> (gurobiDemand[j] == gurobiDemand[0] + self.demand[j - 1]), name=f'cons13_0_{j}_{k}')
+                self.model.addConstr(gurobiDemand[0] == 0, name=f'cons_q_0_{k}')
+
+        for j in range(2 * self.requirementNum + 2):
+            self.model.addConstr(gurobiDemand[j] <= self.max_capacity, name=f'cons_q_max_{j}')
+
+        # 在约束中添加对gurobiTime的限制
+        for i in range(1, self.requirementNum + 1):
+            self.model.addConstr(gurobiTime[i] >= self.start_time[i - 1], name=f'cons_start_time_{i}')
 
     def optimize(self):
         self.model.optimize()
